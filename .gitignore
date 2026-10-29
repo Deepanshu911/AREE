@@ -9,6 +9,7 @@
 *.sqlite3
 aree_data.db
 aree/incidents.db
+aree_agent_config.json
 *.log
 logs/
 incidents.log

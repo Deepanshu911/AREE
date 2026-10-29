@@ -1,20 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-AREE Dashboard v2.0 — Autonomous Risk Evolution Engine
+AREE Dashboard v2.1 — Autonomous Risk Evolution Engine
 ======================================================
-Real-time system monitoring dashboard with live backend integration.
+Multi-Device Real-Time System Monitoring & Safe Self-Healing Platform.
 
-Entry point: streamlit run ui/app.py  (run from project root)
+Supports:
+  - Mode A: Zero-install Browser-Reported Capabilities Sandbox
+  - Mode B: Full Local Device Monitoring via Enrolled AREE Agents
+  - Cloud Host Monitoring: Transparent container performance telemetry
 """
-import sys
-import os
-import time
 import datetime
+import json
 import logging
+import os
+import sys
+import time
 
-import streamlit as st
-import pandas as pd
 import numpy as np
+import pandas as pd
+import streamlit as st
 
 try:
     import plotly.graph_objects as go
@@ -24,14 +28,26 @@ except ImportError:
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger(__name__)
 
+# ── Monitored Microservice Topology ──────────────────────────────────────────
+SERVICES = ["auth-service", "api-gateway", "payment-gateway", "user-db", "order-service", "cache-redis"]
+
+# ── Ensure API routes are mounted on Streamlit's Tornado server ───────────────
+try:
+    from server.tornado_mount import ensure_api_mounted
+    ensure_api_mounted()
+except Exception as e:
+    logger.debug("API mount check: %s", e)
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AREE — Autonomous Risk Evolution Engine",
+    page_title="AREE — Multi-Device Cyber Risk & Monitoring",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -44,7 +60,7 @@ st.markdown("""
     .stApp {
         background: linear-gradient(-45deg,#020617,#0a1120,#071426,#020617);
         background-size: 300% 300%;
-        animation: cyberMove 10s ease infinite;
+        animation: cyberMove 12s ease infinite;
     }
     @keyframes cyberMove {
         0%   { background-position: 0% 50%; }
@@ -59,41 +75,28 @@ st.markdown("""
         background: #0f172a; border: 1px solid #1e293b; border-radius: 10px;
         padding: 16px; text-align: center;
     }
-    .kpi-value { font-size: 32px; font-weight: bold; margin: 4px 0; }
-    .kpi-label { font-size: 12px; color: #9CA3AF; }
+    .kpi-value { font-size: 30px; font-weight: bold; margin: 4px 0; }
+    .kpi-label { font-size: 11px; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.5px; }
     .incident-card {
         background: #0f172a; border-left: 4px solid #ef4444;
         border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
     }
     .incident-card.warning { border-left-color: #f97316; }
     .incident-card.low { border-left-color: #22c55e; }
-    .status-live { color: #22c55e; font-weight: bold; }
-    .status-stale { color: #f97316; font-weight: bold; }
-    .status-unavailable { color: #ef4444; font-weight: bold; }
-    .status-simulated { color: #9CA3AF; font-weight: bold; }
-    .alert-critical {
-        background: linear-gradient(90deg,#3b0d0d,#4a1010,#3b0d0d);
-        border: 1px solid #7f1d1d; border-radius: 10px;
-        padding: 14px 18px; color: #fecaca; font-weight: 500;
-        animation: alertGlow 2s infinite alternate;
+    .status-badge {
+        display: inline-block; padding: 3px 10px; border-radius: 12px;
+        font-size: 11px; font-weight: 600; text-transform: uppercase;
     }
-    @keyframes alertGlow {
-        from { box-shadow: 0 0 5px rgba(239,68,68,0.4); }
-        to   { box-shadow: 0 0 18px rgba(239,68,68,0.9); }
-    }
-    .stMetric label { font-size: 12px !important; }
+    .badge-connected { background: #064e3b; color: #34d399; border: 1px solid #059669; }
+    .badge-stale { background: #78350f; color: #fbbf24; border: 1px solid #d97706; }
+    .badge-disconnected { background: #7f1d1d; color: #f87171; border: 1px solid #dc2626; }
+    .badge-browser { background: #1e3a8a; color: #60a5fa; border: 1px solid #2563eb; }
+    .badge-cloud { background: #4c1d95; color: #c084fc; border: 1px solid #7c3aed; }
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# BACKEND INTEGRATION — graceful fallback
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ── Backend Integration ───────────────────────────────────────────────────────
 _backend_available = False
-_agent_module = None
-_risk_module = None
-_db_module = None
-
 try:
     from agent.collector import MetricCollector, SystemSnapshot
     from agent.detector import DetectionEngine, Incident, Severity
@@ -101,15 +104,13 @@ try:
     from engine.risk import compute_oss, compute_re, classify_risk
     from store.db import IncidentDB
     from config.config import load_config
+    from server.device_manager import DeviceManager
     _backend_available = True
 except ImportError as e:
-    logger.warning("Real backend not available, using fallback: %s", e)
+    logger.warning("Backend load warning: %s", e)
 
-# Legacy / mock imports
 try:
-    from core.mock_data import (generate_service_metrics, generate_threat_ips,
-                                 generate_incident_log, compute_re_scores,
-                                 get_intervention_suggestions)
+    from core.mock_data import generate_service_metrics, generate_threat_ips
     _mock_data_available = True
 except ImportError:
     _mock_data_available = False
@@ -119,12 +120,6 @@ try:
     _real_metrics_available = True
 except ImportError:
     _real_metrics_available = False
-
-try:
-    from core.auto_remediate import auto_remediate, get_remediation_log, get_system_status
-    _auto_remediate_available = True
-except ImportError:
-    _auto_remediate_available = False
 
 try:
     from visuals.graph_view import build_dependency_graph
@@ -140,722 +135,484 @@ try:
 except ImportError:
     _pdf_available = False
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SESSION STATE INIT
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── State Initialization ──────────────────────────────────────────────────────
+db = IncidentDB() if _backend_available else None
+device_mgr = DeviceManager(db) if _backend_available else None
 
-_ss_defaults = {
-    "agent": None,
-    "db": None,
-    "incidents": [],
-    "last_snapshot": None,
-    "remediation_log": [],
-    "pending_approvals": [],
-}
-for k, v in _ss_defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+if "remediation_log" not in st.session_state:
+    st.session_state.remediation_log = []
+if "enrollment_info" not in st.session_state:
+    st.session_state.enrollment_info = None
 
-# Auto-start agent on initial load if backend available
-if st.session_state.get("agent") is None and _backend_available:
+# Auto-start local cloud-host agent if running locally
+if "cloud_agent" not in st.session_state and _backend_available:
     try:
         cfg = load_config() if callable(load_config) else {}
-        db = IncidentDB()
-        agent = MonitoringAgent(config=cfg, db=db)
-        agent.start()
-        st.session_state.agent = agent
-        st.session_state.db = db
+        cloud_agent = MonitoringAgent(config=cfg, db=db)
+        cloud_agent.start()
+        st.session_state.cloud_agent = cloud_agent
     except Exception as e:
-        logger.warning("Agent auto-init error: %s", e)
+        logger.debug("Cloud agent auto-init: %s", e)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
+# SIDEBAR — MULTI-DEVICE SELECTOR & ENROLLMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown("### ⚡ AREE v2.0")
-    st.markdown("*Autonomous Risk Evolution Engine*")
+    st.markdown("### ⚡ AREE Multi-Device")
+    st.markdown("*Autonomous Risk Evolution Engine v2.1*")
     st.markdown("---")
 
-    # Data source
-    if _backend_available:
-        data_mode = st.radio(
-            "📡 Data Source",
-            ["🟢 Live System Monitoring", "⚪ Mock / Simulation"],
-            index=0,
-        )
-        use_live = "Live" in data_mode
-    else:
-        st.warning("⚠️ Real backend modules not found. Using mock data.")
-        use_live = False
-        data_mode = "⚪ Mock / Simulation"
+    # 1. Device Selection Dropdown
+    enrolled_devices = db.list_devices() if db else []
 
-    # Permission / remediation mode
+    device_options = [
+        "🌐 Current Device (Browser-Reported Sandbox)",
+        "🖥️ Cloud Server (Streamlit Host Container)",
+    ]
+
+    device_map = {}
+    for d in enrolled_devices:
+        conn_status = d.get("connection_status", "connected").upper()
+        icon = "🟢" if conn_status == "CONNECTED" else "🟡" if conn_status == "STALE" else "🔴"
+        label = f"💻 {d['device_name']} ({d['device_id']}) [{icon} {conn_status}]"
+        device_options.append(label)
+        device_map[label] = d
+
+    selected_option = st.selectbox(
+        "📱 Monitored Target Device",
+        device_options,
+        index=0,
+        help="Select which physical computer or browser session to monitor."
+    )
+
+    is_browser_mode = "Browser-Reported" in selected_option
+    is_cloud_mode = "Cloud Server" in selected_option
+    is_enrolled_mode = not is_browser_mode and not is_cloud_mode
+    active_device_data = device_map.get(selected_option) if is_enrolled_mode else None
+
+    st.markdown("---")
+
+    # 2. Permission Mode
     permission_mode = st.selectbox(
-        "🔐 Remediation Mode",
+        "🔐 Remediation Policy",
         [
-            "OBSERVE (monitor only)",
-            "SUGGEST (recommend only)",
-            "APPROVED AUTO-FIX (safe actions)",
-            "MANUAL (require approval)",
+            "SUGGEST (Operator Dispatch Required)",
+            "APPROVED_AUTO (Execute Safe Allowlist)",
+            "MANUAL (Interactive Approval Tokens)",
+            "OBSERVE (Monitor Only)",
         ],
-        index=1,
-        help="Controls whether AREE can automatically fix problems.",
+        index=0,
     )
     perm_key = permission_mode.split(" ")[0]
 
-    st.markdown("---")
-
-    # Scenario (mock mode only)
-    if not use_live:
-        scenario = st.selectbox(
-            "🎭 Scenario",
-            ["Normal Operations", "DDoS Attack", "Config Drift",
-             "Brute Force", "Data Exfiltration"],
-        )
-    else:
-        scenario = "Normal Operations"
-
-    n_services = st.slider("🔢 Services to Monitor", 2, 8, 8)
-
-    st.markdown("---")
-
-    st.markdown("**⚠️ Alert Thresholds**")
-    warning_threshold  = st.slider("Warning RE %",  20, 70, 45)
+    # 3. Alert Thresholds
+    st.markdown("**⚠️ Risk Thresholds**")
+    warning_threshold = st.slider("Warning RE %", 20, 70, 45)
     critical_threshold = st.slider("Critical RE %", 50, 95, 75)
 
     st.markdown("---")
-    auto_refresh = st.checkbox("🔄 Auto Refresh (10s)", value=False)
+    auto_refresh_sec = st.selectbox("🔄 Auto-Refresh Interval", ["Off", "5 seconds", "10 seconds", "30 seconds"], index=2)
 
-    # Agent controls (live mode only)
-    if _backend_available and use_live:
-        st.markdown("---")
-        st.markdown("**🤖 Monitoring Agent**")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("▶ Start", use_container_width=True):
-                if st.session_state.agent is None:
-                    try:
-                        cfg = load_config() if callable(load_config) else {}
-                        db  = IncidentDB()
-                        agent = MonitoringAgent(config=cfg, db=db)
-                        agent.start()
-                        st.session_state.agent = agent
-                        st.session_state.db    = db
-                        st.success("Agent started!")
-                    except Exception as e:
-                        st.error(f"Start failed: {e}")
-                else:
-                    st.info("Already running.")
-        with col_b:
-            if st.button("⏹ Stop", use_container_width=True):
-                if st.session_state.agent is not None:
-                    st.session_state.agent.stop()
-                    st.session_state.agent = None
-                    st.success("Agent stopped.")
+    # 4. Device Enrollment Drawer
+    with st.expander("➕ Enroll a New Computer"):
+        st.markdown("**Connect your Laptop / PC**")
+        new_dev_name = st.text_input("Device Name", value="My-Workstation", key="new_dev_name")
+        new_dev_os = st.selectbox("Operating System", ["Windows", "Linux", "macOS"], index=0)
 
-    st.markdown("---")
-    st.caption(f"Mode: **{perm_key}** | {'Live' if use_live else 'Mock'}")
+        if st.button("Generate Enrollment Token", use_container_width=True):
+            if device_mgr:
+                new_id, raw_token = device_mgr.enroll_device(device_name=new_dev_name, os_type=new_dev_os)
+                st.session_state.enrollment_info = {
+                    "device_id": new_id,
+                    "token": raw_token,
+                    "name": new_dev_name,
+                    "os": new_dev_os,
+                }
+                st.success(f"Device enrolled! ID: `{new_id}`")
+
+        if st.session_state.enrollment_info:
+            e_info = st.session_state.enrollment_info
+            st.markdown(f"**Token:** `{e_info['token']}`")
+            st.markdown("*Run on your target computer:*")
+            cmd = f"python aree_agent.py --server http://localhost:8501 --device-id {e_info['device_id']} --token {e_info['token']}"
+            st.code(cmd, language="bash")
+            st.caption("Replace localhost with your public Streamlit URL if running in cloud.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONSTANTS
+# MODE A — BROWSER-REPORTED STATUS (ZERO-INSTALL)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SERVICES = [
-    "auth-service", "payment-gateway", "user-db", "api-gateway",
-    "notification-svc", "order-service", "inventory-db", "logging-svc",
-]
+if is_browser_mode:
+    st.markdown("## 🌐 Mode A: Browser-Reported Capabilities Sandbox")
+    st.markdown(
+        f'<div class="dashboard-card">'
+        f'<span class="status-badge badge-browser">Mode A: Browser Sandbox</span> &nbsp;|&nbsp; '
+        f'Target: <b>Visitor Web Session</b> &nbsp;|&nbsp; '
+        f'Status: <span style="color:#60a5fa;font-weight:bold;">Active Connection</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+    st.info(
+        "🛡️ **Browser Sandbox Boundary:** You are viewing this device through standard web browser capabilities. "
+        "A secure web browser cannot inspect operating system processes, physical CPU hardware load, or local filesystem contents. "
+        "To inspect full OS metrics and enable autonomous self-healing, enroll this computer with the **AREE Agent** via the sidebar."
+    )
 
-def get_data_source_label(use_live: bool, agent_ok: bool,
-                           last_time: datetime.datetime = None) -> tuple:
-    """Returns (label_html, data_state) for the status banner."""
-    if not use_live:
-        return '<span class="status-simulated">⚪ SIMULATED</span>', "simulated"
-    if not agent_ok:
-        return '<span class="status-unavailable">🔴 UNAVAILABLE</span>', "unavailable"
-    if last_time is None:
-        return '<span class="status-unavailable">🔴 NO DATA YET</span>', "unavailable"
-    age_s = (datetime.datetime.utcnow() - last_time).total_seconds()
-    if age_s < 30:
-        return f'<span class="status-live">🟢 LIVE ({age_s:.0f}s ago)</span>', "live"
-    if age_s < 300:
-        return f'<span class="status-stale">🟡 STALE ({age_s:.0f}s ago)</span>', "stale"
-    return '<span class="status-unavailable">🔴 STALE (&gt;5min)</span>', "unavailable"
-
-
-def collect_live_data(agent, n_services: int) -> tuple:
-    """Collect live data from a running agent. Returns (df, incidents, snapshot, error)."""
-    try:
-        snapshot  = agent.get_latest_snapshot()
-        incidents = agent.get_recent_incidents(limit=20)
-        if snapshot is None:
-            return None, [], None, "No snapshot available yet"
-        if _real_metrics_available:
-            metrics_df = get_real_metrics(n_services)
-            # Try canonical RE formula first
-            try:
-                from engine.risk import compute_oss, compute_re  # noqa: F811
-                re_scores = []
-                for _, row in metrics_df.iterrows():
-                    oss = compute_oss(cpu_pct=row["cpu"], ram_pct=row["memory"],
-                                      latency_ms=row["latency_ms"])
-                    re  = compute_re(oss=oss, tes=0.0, dss=0.0, bcs=0.5)
-                    re_scores.append(re)
-                metrics_df["re_score"] = re_scores
-            except ImportError:
-                metrics_df = compute_re_from_real(metrics_df)
-        else:
-            return None, [], None, "real_metrics module unavailable"
-        return metrics_df, incidents, snapshot, None
-    except Exception as e:
-        return None, [], None, str(e)
-
-
-def collect_mock_data(scenario: str, n_services: int,
-                      warning_thr: float, critical_thr: float) -> tuple:
-    """Generate scenario-based mock data. Returns (df, [], None, error)."""
-    import random
-    rows = []
-    for svc in SERVICES[:n_services]:
-        if scenario == "DDoS Attack":
-            cpu = random.uniform(70, 95)
-            tes = random.uniform(0.7, 0.95)
-        elif scenario == "Config Drift":
-            cpu = random.uniform(40, 70)
-            tes = random.uniform(0.3, 0.6)
-        elif scenario == "Brute Force":
-            cpu = random.uniform(30, 60)
-            tes = random.uniform(0.7, 0.9)
-        elif scenario == "Data Exfiltration":
-            cpu = random.uniform(20, 45)
-            tes = random.uniform(0.8, 0.99)
-        else:  # Normal
-            cpu = random.uniform(10, 50)
-            tes = random.uniform(0.0, 0.25)
-
-        mem       = random.uniform(20, 80)
-        latency   = 50 + (cpu / 100) * 750 + random.uniform(-20, 20)
-        err_rate  = max(0, (cpu - 60) / 40 * 25) if cpu > 60 else random.uniform(0, 3)
-
-        try:
-            from engine.risk import compute_oss, compute_re  # noqa: F811
-            oss = compute_oss(cpu_pct=cpu, ram_pct=mem, latency_ms=latency)
-            re  = compute_re(oss=oss, tes=tes, dss=0.0, bcs=0.5)
-        except ImportError:
-            # Legacy fallback formula
-            re = (cpu / 100 * 40) + (err_rate / 25 * 30) + (latency / 800 * 20) + (tes * 10)
-            re = min(re, 100.0)
-
-        rows.append({
-            "service":     svc,
-            "cpu":         round(cpu, 2),
-            "memory":      round(mem, 2),
-            "error_rate":  round(err_rate, 2),
-            "latency_ms":  round(latency, 2),
-            "req_per_sec": random.randint(50, 1000),
-            "re_score":    round(re, 2),
-        })
-
-    df = pd.DataFrame(rows)
-    return df, [], None, None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DATA COLLECTION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-agent         = st.session_state.agent
-agent_running = (
-    agent is not None
-    and hasattr(agent, "is_running")
-    and agent.is_running
-)
-
-if use_live and agent_running:
-    data, incidents, snapshot, data_err = collect_live_data(agent, n_services)
-    last_time = snapshot.timestamp if snapshot else None
-    if data is None or (hasattr(data, "empty") and data.empty):
-        if _real_metrics_available:
-            try:
-                data = compute_re_from_real(get_real_metrics(n_services))
-                data_err = None
-            except Exception as fe:
-                data_err = str(fe)
-elif use_live:
-    # Live requested but no agent — use psutil directly via real_metrics
-    try:
-        data      = compute_re_from_real(get_real_metrics(n_services))
-        incidents = []
-        snapshot  = None
-        last_time = datetime.datetime.utcnow()
-        data_err  = None
-    except Exception as e:
-        data, incidents, snapshot, last_time, data_err = (
-            pd.DataFrame(), [], None, None, str(e))
-else:
-    data, incidents, snapshot, data_err = collect_mock_data(
-        scenario, n_services, warning_threshold, critical_threshold)
-    last_time = datetime.datetime.utcnow()
-
-# Abort on total data failure
-if data is None or (hasattr(data, "empty") and data.empty):
-    st.error(f"❌ Data collection failed: {data_err or 'Unknown error'}")
-    st.info("Try switching to **Mock / Simulation** mode in the sidebar.")
-    st.stop()
-
-# Apply auto-remediation simulation (SUGGEST / APPROVED modes)
-rem_actions = []
-if _auto_remediate_available and "re_score" in data.columns:
-    if perm_key in ("SUGGEST", "APPROVED", "MANUAL"):
-        try:
-            data, rem_actions = auto_remediate(data, critical_threshold=critical_threshold)
-            if rem_actions:
-                st.session_state.remediation_log.extend(rem_actions)
-        except Exception:
-            rem_actions = []
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HEADER + STATUS BANNER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("# ⚡ AREE — Autonomous Risk Evolution Engine")
-st.markdown("*Real-Time System Risk Monitoring & Self-Healing Platform*")
-
-label_html, data_state = get_data_source_label(
-    use_live=use_live,
-    agent_ok=agent_running,
-    last_time=last_time if use_live else None,
-)
-mode_note = f"Mode: **{perm_key}**"
-st.markdown(
-    f'<div class="dashboard-card" style="padding:10px 16px;">'
-    f'Data Source: {label_html} &nbsp;|&nbsp; {mode_note} &nbsp;|&nbsp; '
-    f'Updated: {datetime.datetime.now().strftime("%H:%M:%S")}'
-    f'</div>',
-    unsafe_allow_html=True,
-)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# KPI CARDS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-avg_re         = data["re_score"].mean()         if "re_score" in data.columns else 0.0
-critical_count = int((data["re_score"] >= critical_threshold).sum()) if "re_score" in data.columns else 0
-warning_count  = int(((data["re_score"] >= warning_threshold) &
-                       (data["re_score"] < critical_threshold)).sum()) if "re_score" in data.columns else 0
-health_score   = max(0.0, 100.0 - avg_re)
-
-col1, col2, col3, col4, col5 = st.columns(5)
-
-with col1:
-    hc = "#22c55e" if health_score >= 70 else "#f97316" if health_score >= 40 else "#ef4444"
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-label">System Health</div>
-        <div class="kpi-value" style="color:{hc}">{health_score:.1f}%</div>
-    </div>""", unsafe_allow_html=True)
-
-with col2:
-    rc = "#ef4444" if avg_re >= critical_threshold else "#f97316" if avg_re >= warning_threshold else "#22c55e"
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-label">Avg Risk Energy</div>
-        <div class="kpi-value" style="color:{rc}">{avg_re:.1f}</div>
-    </div>""", unsafe_allow_html=True)
-
-with col3:
-    cc = "#ef4444" if critical_count > 0 else "#22c55e"
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-label">Critical Services</div>
-        <div class="kpi-value" style="color:{cc}">{critical_count}</div>
-    </div>""", unsafe_allow_html=True)
-
-with col4:
-    wc = "#f97316" if warning_count > 0 else "#22c55e"
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-label">Warning Services</div>
-        <div class="kpi-value" style="color:{wc}">{warning_count}</div>
-    </div>""", unsafe_allow_html=True)
-
-with col5:
-    ac = "#22c55e" if agent_running else "#9CA3AF"
-    at = "ACTIVE" if agent_running else "INACTIVE"
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-label">Agent Status</div>
-        <div class="kpi-value" style="color:{ac};font-size:20px">{at}</div>
-    </div>""", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# AGENT STATUS PANEL
-# ═══════════════════════════════════════════════════════════════════════════════
-
-with st.expander("🤖 Agent Status", expanded=False):
-    a_col1, a_col2, a_col3 = st.columns(3)
-    with a_col1:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Backend Modules</div>'
-            f'<div class="kpi-value" style="color:{"#22c55e" if _backend_available else "#ef4444"};font-size:16px;">'
-            f'{"AVAILABLE" if _backend_available else "NOT FOUND"}</div></div>',
-            unsafe_allow_html=True)
-    with a_col2:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Real Metrics</div>'
-            f'<div class="kpi-value" style="color:{"#22c55e" if _real_metrics_available else "#ef4444"};font-size:16px;">'
-            f'{"AVAILABLE" if _real_metrics_available else "NOT FOUND"}</div></div>',
-            unsafe_allow_html=True)
-    with a_col3:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Visuals</div>'
-            f'<div class="kpi-value" style="color:{"#22c55e" if _visuals_available else "#ef4444"};font-size:16px;">'
-            f'{"AVAILABLE" if _visuals_available else "NOT FOUND"}</div></div>',
-            unsafe_allow_html=True)
-
-    if agent_running and hasattr(agent, "get_status"):
-        try:
-            status_info = agent.get_status()
-            st.json(status_info)
-        except Exception:
-            pass
-
-    last_update_str = last_time.strftime("%H:%M:%S UTC") if last_time else "N/A"
-    st.markdown(f"**Last data collection:** `{last_update_str}` &nbsp;|&nbsp; "
-                f"**Data mode:** `{data_state.upper()}`")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# REAL SYSTEM METRICS (live mode)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if use_live:
-    with st.expander("🖥️ Real System Metrics (Live)", expanded=True):
-        if snapshot is not None:
-            c1, c2, c3 = st.columns(3)
-            cpu_pct = getattr(snapshot, "cpu_percent", None)
-            ram_pct = getattr(snapshot, "ram_percent", None)
-            uptime  = getattr(snapshot, "uptime_seconds", None)
-            ram_avail = getattr(snapshot, "ram_available_gb", None)
-            with c1:
-                if cpu_pct is not None:
-                    cpu_c = "#ef4444" if cpu_pct > 85 else "#f97316" if cpu_pct > 70 else "#22c55e"
-                    st.markdown(
-                        f'<div class="kpi-card"><div class="kpi-label">CPU</div>'
-                        f'<div class="kpi-value" style="color:{cpu_c}">{cpu_pct:.1f}%</div></div>',
-                        unsafe_allow_html=True)
-            with c2:
-                if ram_pct is not None:
-                    ram_c = "#ef4444" if ram_pct > 90 else "#f97316" if ram_pct > 75 else "#22c55e"
-                    extra = f"{ram_avail:.1f} GB free" if ram_avail else ""
-                    st.markdown(
-                        f'<div class="kpi-card"><div class="kpi-label">RAM</div>'
-                        f'<div class="kpi-value" style="color:{ram_c}">{ram_pct:.1f}%</div>'
-                        f'<div class="kpi-label">{extra}</div></div>',
-                        unsafe_allow_html=True)
-            with c3:
-                if uptime is not None:
-                    uptime_h = uptime / 3600
-                    st.markdown(
-                        f'<div class="kpi-card"><div class="kpi-label">Uptime</div>'
-                        f'<div class="kpi-value" style="color:#22c55e;font-size:20px">{uptime_h:.1f}h</div></div>',
-                        unsafe_allow_html=True)
-
-            disk_parts = getattr(snapshot, "disk_partitions", [])
-            if disk_parts:
-                st.markdown("**Disk Partitions**")
-                for part in disk_parts:
-                    pct   = getattr(part, "percent_used", 0)
-                    free  = getattr(part, "free_gb", 0)
-                    mnt   = getattr(part, "mountpoint", "?")
-                    d_c   = "#ef4444" if pct > 90 else "#f97316" if pct > 75 else "#22c55e"
-                    st.markdown(
-                        f'<div style="margin-bottom:8px;">'
-                        f'<div style="display:flex;justify-content:space-between;color:#9CA3AF;font-size:12px;">'
-                        f'<span>💾 {mnt}</span>'
-                        f'<span style="color:{d_c};">{pct:.1f}% — {free:.1f}GB free</span></div>'
-                        f'<div style="background:#1f2937;border-radius:4px;height:8px;margin-top:4px;">'
-                        f'<div style="width:{min(pct,100)}%;background:{d_c};height:100%;border-radius:4px;"></div>'
-                        f'</div></div>', unsafe_allow_html=True)
-        else:
-            # No agent snapshot — use psutil directly
-            try:
-                import psutil
-                cpu_pct = psutil.cpu_percent(interval=0.5)
-                ram     = psutil.virtual_memory()
-                cpu_c   = "#ef4444" if cpu_pct > 85 else "#f97316" if cpu_pct > 70 else "#22c55e"
-                ram_c   = "#ef4444" if ram.percent > 90 else "#f97316" if ram.percent > 75 else "#22c55e"
-                c1, c2  = st.columns(2)
-                with c1:
-                    st.markdown(
-                        f'<div class="kpi-card"><div class="kpi-label">CPU (Host)</div>'
-                        f'<div class="kpi-value" style="color:{cpu_c}">{cpu_pct:.1f}%</div></div>',
-                        unsafe_allow_html=True)
-                with c2:
-                    st.markdown(
-                        f'<div class="kpi-card"><div class="kpi-label">RAM (Host)</div>'
-                        f'<div class="kpi-value" style="color:{ram_c}">{ram.percent:.1f}%</div>'
-                        f'<div class="kpi-label">{ram.available/1024**3:.1f} GB free</div></div>',
-                        unsafe_allow_html=True)
-            except Exception as e:
-                st.warning(f"psutil unavailable: {e}")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ACTIVE INCIDENTS PANEL
-# ═══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("---")
-st.markdown("### 🚨 Active Incidents")
-
-all_incidents = list(incidents) if incidents else []
-
-# Supplement with threshold-based incidents derived from service data
-for _, row in data.iterrows():
-    re = row.get("re_score", 0)
-    if re >= critical_threshold:
-        all_incidents.append({
-            "severity":           "CRITICAL",
-            "resource":           row["service"],
-            "explanation":        f"{row['service']} RE={re:.1f} exceeds critical threshold ({critical_threshold}).",
-            "probable_cause":     f"CPU: {row.get('cpu',0):.1f}%, Error Rate: {row.get('error_rate',0):.1f}%",
-            "recommended_action": f"Isolate {row['service']} and inspect dependent services.",
-            "incident_id":        f"dash-{row['service'][:4]}-{int(re)}",
-        })
-
-if not all_incidents:
-    st.success("✅ No active incidents — all services within normal parameters.")
-else:
-    for inc in all_incidents[:10]:
-        sev              = inc.get("severity", "MEDIUM")      if isinstance(inc, dict) else getattr(inc, "severity", "MEDIUM")
-        resource         = inc.get("resource", "unknown")     if isinstance(inc, dict) else getattr(inc, "resource", "unknown")
-        explanation      = inc.get("explanation", "")         if isinstance(inc, dict) else getattr(inc, "explanation", "")
-        probable_cause   = inc.get("probable_cause", "")      if isinstance(inc, dict) else getattr(inc, "probable_cause", "")
-        recommended_act  = inc.get("recommended_action", "")  if isinstance(inc, dict) else getattr(inc, "recommended_action", "")
-        inc_id           = inc.get("incident_id", "N/A")      if isinstance(inc, dict) else getattr(inc, "incident_id", "N/A")
-
-        sev_class = "" if sev == "CRITICAL" else " warning" if sev in ("MEDIUM", "HIGH") else " low"
-        st.markdown(f"""
-        <div class="incident-card{sev_class}">
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-                <span style="font-weight:bold;color:white;">{resource}</span>
-                <span style="font-size:11px;background:#1f2937;padding:2px 8px;border-radius:4px;">{sev}</span>
+    # Interactive Browser Footprint JavaScript Component
+    st.components.v1.html("""
+    <div id="browser-telemetry" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:20px;font-family:system-ui,sans-serif;color:#FAFAFA;">
+        <div style="font-size:16px;font-weight:bold;margin-bottom:12px;color:#60a5fa;">📊 Browser-Accessible Client Diagnostics</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+            <div style="background:#1e293b;padding:12px;border-radius:8px;">
+                <div style="color:#94a3b8;font-size:11px;">BROWSER PLATFORM</div>
+                <div id="b-platform" style="font-size:16px;font-weight:bold;margin-top:4px;">Detecting...</div>
             </div>
-            <div style="color:#d1d5db;font-size:13px;margin-bottom:4px;">📋 {explanation}</div>
-            <div style="color:#9CA3AF;font-size:12px;">🔍 {probable_cause}</div>
-            <div style="color:#60a5fa;font-size:12px;margin-top:4px;">💡 {recommended_act}</div>
-            <div style="color:#4b5563;font-size:10px;margin-top:6px;">ID: {inc_id}</div>
-        </div>""", unsafe_allow_html=True)
+            <div style="background:#1e293b;padding:12px;border-radius:8px;">
+                <div style="color:#94a3b8;font-size:11px;">LOGICAL CPU CORES</div>
+                <div id="b-cores" style="font-size:16px;font-weight:bold;margin-top:4px;">Detecting...</div>
+            </div>
+            <div style="background:#1e293b;padding:12px;border-radius:8px;">
+                <div style="color:#94a3b8;font-size:11px;">APPROX DEVICE MEMORY</div>
+                <div id="b-memory" style="font-size:16px;font-weight:bold;margin-top:4px;">Detecting...</div>
+            </div>
+            <div style="background:#1e293b;padding:12px;border-radius:8px;">
+                <div style="color:#94a3b8;font-size:11px;">NETWORK STATUS</div>
+                <div id="b-network" style="font-size:16px;font-weight:bold;margin-top:4px;">Detecting...</div>
+            </div>
+            <div style="background:#1e293b;padding:12px;border-radius:8px;">
+                <div style="color:#94a3b8;font-size:11px;">SCREEN VIEWPORT</div>
+                <div id="b-screen" style="font-size:16px;font-weight:bold;margin-top:4px;">Detecting...</div>
+            </div>
+            <div style="background:#1e293b;padding:12px;border-radius:8px;">
+                <div style="color:#94a3b8;font-size:11px;">RENDER LATENCY</div>
+                <div id="b-latency" style="font-size:16px;font-weight:bold;color:#34d399;margin-top:4px;">Detecting...</div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const start = performance.now();
+        document.getElementById('b-platform').innerText = navigator.platform || navigator.userAgentData?.platform || 'Standard Web';
+        document.getElementById('b-cores').innerText = (navigator.hardwareConcurrency || 'N/A') + ' Cores';
+        document.getElementById('b-memory').innerText = navigator.deviceMemory ? (navigator.deviceMemory + ' GiB') : 'Restricted by Browser';
+        
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        let netInfo = navigator.onLine ? '🟢 Online' : '🔴 Offline';
+        if (conn && conn.effectiveType) {
+            netInfo += ' (' + conn.effectiveType.toUpperCase() + ', ~' + (conn.downlink || '10') + 'Mbps)';
+        }
+        document.getElementById('b-network').innerText = netInfo;
+        document.getElementById('b-screen').innerText = window.innerWidth + 'x' + window.innerHeight + ' (' + screen.width + 'x' + screen.height + ')';
+        
+        window.onload = function() {
+            const duration = Math.round(performance.now() - start);
+            document.getElementById('b-latency').innerText = duration + ' ms';
+        };
+    </script>
+    """, height=220)
 
-        # Approval button in MANUAL mode
-        if perm_key == "MANUAL" and sev == "CRITICAL":
-            if st.button(f"✅ Approve Fix for {resource}", key=f"approve-{inc_id}"):
-                st.session_state.pending_approvals.append(inc_id)
-                st.success(f"Action queued for {resource}")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HEALTH GAUGE + SERVICE OVERVIEW
-# ═══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("---")
-col_gauge, col_table = st.columns([1, 1])
-
-with col_gauge:
-    st.markdown("### 🩺 System Health Score")
-    if _plotly_available:
-        gauge_fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=health_score,
-            title={"text": "System Stability Index"},
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#00C896"},
-                "steps": [
-                    {"range": [0, 40],   "color": "#4a1010"},
-                    {"range": [40, 70],  "color": "#3a2a00"},
-                    {"range": [70, 100], "color": "#0a2a1a"},
-                ],
-                "threshold": {
-                    "line": {"color": "#ef4444", "width": 4},
-                    "thickness": 0.75,
-                    "value": 100 - critical_threshold,
-                },
-            },
-        ))
-        gauge_fig.update_layout(paper_bgcolor="#020617", font={"color": "white"}, height=300)
-        st.plotly_chart(gauge_fig, use_container_width=True)
-    else:
-        st.metric("System Stability Index", f"{health_score:.1f}%")
-        st.progress(max(0.0, min(1.0, health_score / 100.0)))
-
-with col_table:
-    st.markdown("### 📊 Service Risk Overview")
-    if "re_score" in data.columns:
-        risk_table = data[["service", "re_score"]].sort_values("re_score", ascending=False)
-        for _, row in risk_table.iterrows():
-            score = row["re_score"]
-            color = "#ef4444" if score >= critical_threshold else "#f97316" if score >= warning_threshold else "#22c55e"
-            st.markdown(
-                f'<div style="display:flex;align-items:center;margin-bottom:10px;">'
-                f'<div style="width:160px;color:#cbd5f5;">{row["service"]}</div>'
-                f'<div style="flex:1;height:10px;background:#1f2937;border-radius:5px;margin:0 10px;">'
-                f'<div style="width:{score}%;height:100%;background:{color};border-radius:5px;"></div></div>'
-                f'<div style="width:60px;text-align:right;color:{color};">{score:.1f}</div>'
-                f'</div>', unsafe_allow_html=True)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# AURA HEATMAP
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if _visuals_available:
     st.markdown("---")
-    st.markdown("### 🌡️ Risk Aura Heatmap")
-    try:
-        heatmap_fig = build_aura_heatmap(
-            data,
-            critical_threshold=critical_threshold,
-            warning_threshold=warning_threshold,
-        )
-        st.pyplot(heatmap_fig)
-    except Exception as e:
-        st.warning(f"Heatmap unavailable: {e}")
+    st.markdown("### 📥 Want Full Local Monitoring for this Computer?")
+    c_inst1, c_inst2 = st.columns(2)
+    with c_inst1:
+        st.markdown("""
+        **Step 1: Install prerequisites**
+        ```bash
+        pip install psutil requests
+        ```
+        """)
+    with c_inst2:
+        st.markdown("""
+        **Step 2: Run the AREE Agent**
+        ```bash
+        python aree_agent.py --server https://<your-deployed-url> --enroll --name "My-Device"
+        ```
+        """)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# RISK TIMELINE
+# MODE B & CLOUD HOST — FULL LOCAL SYSTEM MONITORING
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if _visuals_available:
-    st.markdown("---")
-    st.markdown("### 📈 Risk Energy Timeline")
-    try:
-        timeline_fig = build_timeline_chart(
-            data,
-            scenario=scenario,
-            critical_threshold=critical_threshold,
-            warning_threshold=warning_threshold,
-        )
-        st.plotly_chart(timeline_fig, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Timeline unavailable: {e}")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEPENDENCY GRAPH
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if _visuals_available:
-    st.markdown("---")
-    st.markdown("### 🔗 Service Dependency & Risk Cascade Graph")
-    try:
-        graph_fig = build_dependency_graph(
-            data,
-            critical_threshold=critical_threshold,
-            warning_threshold=warning_threshold,
-        )
-        st.plotly_chart(graph_fig, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Graph unavailable: {e}")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# REMEDIATION LOG
-# ═══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("---")
-st.markdown("### 🔧 Remediation Log")
-
-rem_log = list(st.session_state.remediation_log)
-if _auto_remediate_available:
-    try:
-        mock_log = get_remediation_log()
-        if hasattr(mock_log, "iterrows"):
-            for _, mrow in mock_log.iterrows():
-                rem_log.append(dict(mrow))
-    except Exception:
-        pass
-
-if not rem_log:
-    st.success("✅ No interventions triggered this session — system stable.")
 else:
-    for entry in rem_log[-20:]:
-        if isinstance(entry, dict):
-            sev   = entry.get("severity", "")
-            color = "#ef4444" if sev == "CRITICAL" else "#f97316"
-            st.markdown(
-                f'<div style="background:#0f172a;border-left:4px solid {color};'
-                f'padding:10px 16px;border-radius:6px;margin-bottom:8px;">'
-                f'<span style="color:#9CA3AF;font-size:12px;">{entry.get("timestamp","")}</span>'
-                f'<span style="color:white;font-weight:bold;margin-left:12px;">{entry.get("service","")}</span>'
-                f'<span style="color:{color};margin-left:12px;">'
-                f'RE: {entry.get("re_before","")} → {entry.get("re_after","")}</span>'
-                f'<div style="color:#d1d5db;font-size:13px;margin-top:4px;">{entry.get("action","")}</div>'
-                f'</div>', unsafe_allow_html=True)
+    # Determine target device identity
+    if is_cloud_mode:
+        active_id = "cloud-host"
+        device_display_name = "Cloud Server (Streamlit Host Container)"
+        os_display = "Linux / Container"
+        badge_html = '<span class="status-badge badge-cloud">Host Container Telemetry</span>'
+        # Get live data directly from psutil on cloud host
+        if _real_metrics_available:
+            data = compute_re_from_real(get_real_metrics(8))
+        else:
+            data = pd.DataFrame()
+        snapshot_dict = db.get_latest_snapshot("cloud-host") if db else None
+        active_status = "CONNECTED"
+        last_updated = datetime.datetime.utcnow().strftime("%H:%M:%S UTC")
+    else:
+        # Enrolled device
+        active_id = active_device_data["device_id"]
+        device_display_name = active_device_data.get("device_name", active_id)
+        os_display = active_device_data.get("os_type", "Unknown OS")
+        conn_state = active_device_data.get("connection_status", "connected").upper()
+        badge_cls = "badge-connected" if conn_state == "CONNECTED" else "badge-stale" if conn_state == "STALE" else "badge-disconnected"
+        badge_html = f'<span class="status-badge {badge_cls}">{conn_state}</span>'
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PENDING APPROVALS (MANUAL mode)
-# ═══════════════════════════════════════════════════════════════════════════════
+        # Fetch latest metrics reported by agent
+        snapshot_dict = db.get_latest_snapshot(active_id) if db else None
+        active_status = conn_state
 
-if perm_key == "MANUAL" and st.session_state.pending_approvals:
+        if snapshot_dict:
+            last_updated = snapshot_dict.get("timestamp", "N/A")
+            # Build DataFrame for visualization
+            raw_meta = snapshot_dict.get("raw", {})
+            cpu_val = snapshot_dict.get("cpu_percent", 0.0)
+            ram_val = snapshot_dict.get("ram_percent", 0.0)
+
+            # Synthesize per-service distribution based on genuine device metrics
+            rows = []
+            services = ["auth-service", "api-gateway", "payment-gateway", "user-db", "order-service", "cache-redis"]
+            for idx, s in enumerate(services):
+                c_jitter = max(0.0, min(100.0, cpu_val + (idx * 2 - 5)))
+                r_jitter = max(0.0, min(100.0, ram_val + (idx * 1.5 - 4)))
+                lat_jitter = 40.0 + (c_jitter / 100.0) * 450.0
+                err_jitter = max(0.0, (c_jitter - 75.0) / 25.0 * 15.0) if c_jitter > 75.0 else 0.5
+                oss_c = compute_oss(c_jitter, r_jitter, lat_jitter)
+                re_c = compute_re(oss_c, tes=0.1, dss=0.0, bcs=0.5)
+                rows.append({
+                    "service": s, "cpu": round(c_jitter, 1), "memory": round(r_jitter, 1),
+                    "latency_ms": round(lat_jitter, 1), "error_rate": round(err_jitter, 1),
+                    "re_score": round(re_c, 1)
+                })
+            data = pd.DataFrame(rows)
+        else:
+            last_updated = "No reports received yet"
+            data = pd.DataFrame()
+
+    # ── Top Banner ─────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="dashboard-card" style="padding:14px 20px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<div>'
+        f'<span style="font-size:18px;font-weight:bold;color:white;">💻 {device_display_name}</span> &nbsp;'
+        f'{badge_html} &nbsp;'
+        f'<span style="color:#94a3b8;font-size:13px;">ID: <code>{active_id}</code> | OS: {os_display}</span>'
+        f'</div>'
+        f'<div style="color:#94a3b8;font-size:12px;">Last Heartbeat: <b>{last_updated}</b> | Policy: <b>{perm_key}</b></div>'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+
+    if not snapshot_dict and not is_cloud_mode:
+        st.warning(f"⚠️ No telemetry has been received from `{active_id}` yet. Make sure the agent is running:")
+        st.code(f"python aree_agent.py --server http://localhost:8501 --device-id {active_id} --token <YOUR_TOKEN>", language="bash")
+        st.stop()
+
+    # ── KPI Cards ──────────────────────────────────────────────────────────────
+    avg_re = float(data["re_score"].mean()) if not data.empty and "re_score" in data.columns else 0.0
+    crit_count = int((data["re_score"] >= critical_threshold).sum()) if not data.empty else 0
+    warn_count = int(((data["re_score"] >= warning_threshold) & (data["re_score"] < critical_threshold)).sum()) if not data.empty else 0
+    health_score = max(0.0, 100.0 - avg_re)
+
+    cpu_curr = snapshot_dict.get("cpu_percent", 0.0) if snapshot_dict else data["cpu"].mean() if not data.empty else 0.0
+    ram_curr = snapshot_dict.get("ram_percent", 0.0) if snapshot_dict else data["memory"].mean() if not data.empty else 0.0
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        c_col = "#22c55e" if health_score >= 70 else "#f97316" if health_score >= 40 else "#ef4444"
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Device Health</div><div class="kpi-value" style="color:{c_col}">{health_score:.1f}%</div></div>', unsafe_allow_html=True)
+    with k2:
+        c_cpu = "#ef4444" if cpu_curr >= 85 else "#f97316" if cpu_curr >= 70 else "#22c55e"
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Host CPU Load</div><div class="kpi-value" style="color:{c_cpu}">{cpu_curr:.1f}%</div></div>', unsafe_allow_html=True)
+    with k3:
+        c_ram = "#ef4444" if ram_curr >= 90 else "#f97316" if ram_curr >= 75 else "#22c55e"
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Host RAM Usage</div><div class="kpi-value" style="color:{c_ram}">{ram_curr:.1f}%</div></div>', unsafe_allow_html=True)
+    with k4:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Active Incidents</div><div class="kpi-value" style="color:{"#ef4444" if crit_count > 0 else "#22c55e"}">{crit_count}</div></div>', unsafe_allow_html=True)
+    with k5:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Composite Risk (RE)</div><div class="kpi-value" style="color:{"#ef4444" if avg_re >= critical_threshold else "#22c55e"}">{avg_re:.1f}</div></div>', unsafe_allow_html=True)
+
+    # ── Hardware Diagnostics Section ──────────────────────────────────────────
+    if snapshot_dict:
+        raw_meta = snapshot_dict.get("raw", {})
+        with st.expander("🖥️ Detailed Hardware & Process Telemetry", expanded=True):
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                st.markdown("**💾 Storage Mountpoints**")
+                for part in raw_meta.get("disk_partitions", []):
+                    u_pct = part.get("percent_used", 0)
+                    col = "#ef4444" if u_pct > 90 else "#f97316" if u_pct > 75 else "#22c55e"
+                    st.markdown(
+                        f'<div style="margin-bottom:6px;font-size:12px;">'
+                        f'<span>{part.get("mountpoint")}</span> — <b style="color:{col}">{u_pct:.1f}%</b> ({part.get("free_gb")} GB free)'
+                        f'<div style="background:#1f2937;border-radius:3px;height:6px;margin-top:2px;">'
+                        f'<div style="width:{min(u_pct, 100)}%;background:{col};height:100%;border-radius:3px;"></div>'
+                        f'</div></div>', unsafe_allow_html=True
+                    )
+            with d_col2:
+                st.markdown("**⚡ Running Processes (Top Resource Consumers)**")
+                proc_df = pd.DataFrame(raw_meta.get("top_processes", []))
+                if not proc_df.empty:
+                    st.dataframe(proc_df[["pid", "name", "cpu_percent", "memory_percent", "status"]].head(6), use_container_width=True, height=160)
+
+    # ── Active Incidents & Remote Remediation ──────────────────────────────────
     st.markdown("---")
-    st.markdown("### ✋ Pending Approvals")
-    for appr_id in st.session_state.pending_approvals:
-        st.markdown(
-            f'<div style="background:#0f172a;border-left:4px solid #f97316;'
-            f'padding:10px 16px;border-radius:6px;margin-bottom:8px;">'
-            f'<span style="color:#f97316;">⏳ Queued:</span>'
-            f'<span style="color:white;margin-left:8px;">{appr_id}</span>'
-            f'</div>', unsafe_allow_html=True)
+    st.markdown("### 🚨 Device Incidents & Autonomous Self-Healing")
+
+    device_incidents = db.get_recent_incidents(limit=10, device_id=active_id) if db else []
+    if not device_incidents:
+        st.success(f"✅ Zero active incidents detected on `{device_display_name}`. All thresholds healthy.")
+    else:
+        for inc in device_incidents:
+            sev = inc.get("severity", "MEDIUM")
+            css = "incident-card" + (" warning" if sev in ("MEDIUM", "HIGH") else " low" if sev == "LOW" else "")
+            inc_id = inc.get("incident_id")
+            res_name = inc.get("resource", "System")
+            st.markdown(f"""
+            <div class="{css}">
+                <div style="display:flex;justify-content:space-between;">
+                    <b>{res_name} — {inc.get("rule")}</b>
+                    <span style="font-size:11px;background:#1e293b;padding:2px 6px;border-radius:4px;">{sev}</span>
+                </div>
+                <div style="font-size:13px;margin:4px 0;color:#cbd5e1;">📋 {inc.get("explanation")}</div>
+                <div style="font-size:12px;color:#94a3b8;">🔍 <i>Probable Cause:</i> {inc.get("probable_cause")}</div>
+                <div style="font-size:12px;color:#60a5fa;margin-top:2px;">💡 <i>Recommendation:</i> {inc.get("recommended_action")}</div>
+            </div>""", unsafe_allow_html=True)
+
+            # Manual Remote Remediation Trigger
+            if perm_key in ("MANUAL", "SUGGEST") and inc.get("remediation_status") != "RESOLVED":
+                r_btn1, r_btn2 = st.columns([1, 4])
+                with r_btn1:
+                    if st.button(f"⚡ Dispatch Safe Fix", key=f"fix-{inc_id}"):
+                        task_id = f"task-{inc_id[-6:]}-{int(time.time())}"
+                        action_type = "GC_COLLECT" if "RAM" in inc.get("rule", "") else "CLEAR_TEMP_FILES"
+                        db.queue_remediation_task(task_id, active_id, action_type, incident_id=inc_id, dry_run=False)
+                        st.success(f"Dispatched `{action_type}` directive to agent `{active_id}`!")
+
+    # ── Visual Analytics (Gauge, Heatmap, Timeline, Graph) ────────────────────
+    st.markdown("---")
+    vg_col1, vg_col2 = st.columns([1, 1])
+
+    with vg_col1:
+        st.markdown("### 🩺 System Stability Index")
+        if _plotly_available:
+            gauge_fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=health_score,
+                gauge={
+                    "axis": {"range": [0, 100]},
+                    "bar": {"color": "#00C896"},
+                    "steps": [
+                        {"range": [0, 40], "color": "#4a1010"},
+                        {"range": [40, 70], "color": "#3a2a00"},
+                        {"range": [70, 100], "color": "#0a2a1a"},
+                    ],
+                    "threshold": {"line": {"color": "#ef4444", "width": 4}, "thickness": 0.75, "value": 100 - critical_threshold}
+                }
+            ))
+            gauge_fig.update_layout(paper_bgcolor="#020617", font={"color": "white"}, height=280, margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(gauge_fig, use_container_width=True)
+        else:
+            st.metric("Health Score", f"{health_score:.1f}%")
+            st.progress(health_score / 100.0)
+
+    with vg_col2:
+        st.markdown("### 📊 Service Risk Decomposition")
+        if not data.empty and "re_score" in data.columns:
+            for _, r in data.sort_values("re_score", ascending=False).iterrows():
+                score = r["re_score"]
+                color = "#ef4444" if score >= critical_threshold else "#f97316" if score >= warning_threshold else "#22c55e"
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;margin-bottom:8px;">'
+                    f'<div style="width:140px;font-size:13px;color:#cbd5f5;">{r["service"]}</div>'
+                    f'<div style="flex:1;height:10px;background:#1f2937;border-radius:5px;margin:0 10px;">'
+                    f'<div style="width:{min(score, 100)}%;height:100%;background:{color};border-radius:5px;"></div></div>'
+                    f'<div style="width:50px;text-align:right;font-size:12px;color:{color};font-weight:bold;">{score:.1f}</div>'
+                    f'</div>', unsafe_allow_html=True)
+
+    if _visuals_available and not data.empty:
+        st.markdown("---")
+        st.markdown("### 🌡️ Risk Aura Heatmap")
+        try:
+            h_fig = build_aura_heatmap(data, critical_threshold=critical_threshold, warning_threshold=warning_threshold)
+            st.pyplot(h_fig)
+        except Exception as e:
+            st.warning(f"Heatmap preview: {e}")
+
+        st.markdown("---")
+        st.markdown("### 📈 Risk Energy Evolution Timeline")
+        try:
+            t_fig = build_timeline_chart(data, scenario="Live Operations", critical_threshold=critical_threshold, warning_threshold=warning_threshold)
+            st.plotly_chart(t_fig, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Timeline preview: {e}")
+
+        st.markdown("---")
+        st.markdown("### 🔗 Topology & Risk Propagation Graph")
+        try:
+            g_fig = build_dependency_graph(data, critical_threshold=critical_threshold, warning_threshold=warning_threshold)
+            st.plotly_chart(g_fig, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Graph preview: {e}")
+
+    # ── Remediation Audit Log ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📜 Verified Remediation Audit Ledger")
+    r_logs = db.get_remediation_log(limit=15, device_id=active_id) if db else []
+    if not r_logs:
+        st.info(f"No self-healing operations logged yet for `{device_display_name}`.")
+    else:
+        for entry in r_logs:
+            st.markdown(
+                f'<div style="background:#0f172a;border-left:3px solid #3b82f6;padding:8px 14px;border-radius:6px;margin-bottom:6px;font-size:12px;">'
+                f'<span style="color:#94a3b8;">{entry.get("timestamp")}</span> | '
+                f'<b>{entry.get("action")}</b>: {entry.get("result")} '
+                f'<span style="color:#64748b;">(Operator: {entry.get("operator")})</span>'
+                f'</div>', unsafe_allow_html=True
+            )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# EXPORT + REFRESH
+# FOOTER & REFRESH LOGIC
 # ═══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("---")
-col_dl, col_refresh = st.columns(2)
+b_c1, b_c2 = st.columns([1, 1])
+with b_c1:
+    if st.button("🔄 Refresh Data Now", use_container_width=True):
+        st.rerun()
 
-with col_dl:
-    if _pdf_available:
-        if st.button("📄 Export PDF Report", use_container_width=True):
+with b_c2:
+    if _pdf_available and not is_browser_mode and not data.empty:
+        if st.button("📄 Export Comprehensive Risk Report (PDF)", use_container_width=True):
             try:
-                inc_df   = pd.DataFrame(all_incidents) if all_incidents else pd.DataFrame(
-                    columns=["incident_id", "severity", "resource", "explanation"])
-                pdf_bytes = generate_pdf(data, inc_df)
+                inc_df = pd.DataFrame(device_incidents) if 'device_incidents' in locals() and device_incidents else pd.DataFrame(columns=["incident_id", "severity", "resource", "explanation"])
+                pdf_data = generate_pdf(data, inc_df)
                 st.download_button(
-                    label="⬇ Download Report",
-                    data=pdf_bytes.read() if hasattr(pdf_bytes, "read") else pdf_bytes,
-                    file_name=f"aree_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    "⬇ Download PDF",
+                    data=pdf_data.read() if hasattr(pdf_data, "read") else pdf_data,
+                    file_name=f"aree_report_{active_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                     mime="application/pdf",
                     use_container_width=True,
                 )
             except Exception as e:
                 st.error(f"PDF export failed: {e}")
-    else:
-        st.info("PDF export: install `reportlab`")
 
-with col_refresh:
-    if st.button("🔄 Refresh Now", use_container_width=True):
-        st.rerun()
+try:
+    from streamlit.runtime import exists as _st_exists
+    _in_streamlit = _st_exists()
+except Exception:
+    _in_streamlit = True
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# AUTO REFRESH
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if auto_refresh:
-    time.sleep(10)
+if _in_streamlit and auto_refresh_sec != "Off":
+    delay = 5 if "5" in auto_refresh_sec else 10 if "10" in auto_refresh_sec else 30
+    time.sleep(delay)
     st.rerun()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FOOTER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("---")
 st.markdown(
-    f'<div style="text-align:center;color:#4b5563;font-size:11px;">'
-    f'AREE v2.0 — Autonomous Risk Evolution Engine | TeamIntelloQ | '
-    f'Data: {data_state.upper()} | '
-    f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+    f'<div style="text-align:center;color:#475569;font-size:11px;margin-top:20px;">'
+    f'AREE v2.1 Multi-Device Autonomous Risk Evolution Platform | '
+    f'Active Target: {selected_option.split(" [")[0]} | '
+    f'Server Time: {datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}'
     f'</div>',
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )

@@ -1,59 +1,60 @@
-# ⚡ AREE — Autonomous Risk Evolution Engine (v2.0)
+# ⚡ AREE — Autonomous Risk Evolution Engine (v2.1)
 
-> **Real-Time System Monitoring, Cyber Risk Evolution, and Safe Autonomous Self-Healing Platform**
+> **Multi-Device Real-Time System Monitoring, Cyber Risk Evolution, and Safe Autonomous Self-Healing Platform**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests Passing](https://img.shields.io/badge/tests-31%2F31%20passing-brightgreen.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-38%2F38%20passing-brightgreen.svg)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Deployment: Streamlit Cloud Ready](https://img.shields.io/badge/Streamlit%20Cloud-Ready-ff4b4b.svg)](ui/app.py)
 [![Architecture: Safe Self--Healing](https://img.shields.io/badge/Architecture-Safe%20Self--Healing-orange.svg)](#safe-autonomous-remediation)
 
 ---
 
 ## 📌 1. Project Overview
 
-**AREE (Autonomous Risk Evolution Engine)** is a real-time system monitoring, risk propagation, and safe self-healing platform for local systems and microservice topologies. 
+**AREE (Autonomous Risk Evolution Engine)** is a distributed real-time cyber risk monitoring, topological incident propagation, and safe self-healing platform.
 
-Modern monitoring tools often display disconnected graphs of raw metrics (CPU, RAM, latency) without modeling how localized performance degradation or security exposure cascades into systemic failure. AREE bridges this gap by:
-1. Continuously collecting genuine hardware telemetry (CPU, RAM, Disk, Network, Process stats) via a background monitoring agent.
-2. Formulating an interpretable **Risk Energy (RE)** score combining operational stress, threat intelligence, and dependency graph propagation.
-3. Modeling risk evolution dynamically using differential equation forecasting ($d(RE)/dt$).
-4. Recommending and safely executing auto-remediation playbooks under strict permission policies (with full dry-run support).
-5. Maintaining an auditable SQLite-backed incident and remediation ledger.
+When deployed in the cloud (such as on Streamlit Community Cloud), a common pitfall is showing the cloud container's hardware metrics instead of the visitor's device. **AREE v2.1 solves this with a dual-mode multi-device architecture:**
+
+- **Mode A (Browser-Only Status)**: Zero-install diagnostic mode for visitors opening the deployed website in a browser. It captures legitimate client capabilities (screen resolution, color depth, browser platform, hardware concurrency, network online state, navigation timings) while honestly respecting the browser sandbox boundary (no fake local CPU/disk/process claims).
+- **Mode B (Full Local Device Monitoring)**: Cross-platform local agent (`aree_agent.py`) running on client laptops/servers. Communicates over authenticated single-port Tornado endpoints (`/api/v1/devices/...`) to stream genuine `psutil` metrics, detect local incidents, and execute pull-based, allowlisted self-healing playbooks.
 
 ---
 
 ## 🏗️ 2. System Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        HARDWARE TELEMETRY LAYER                        │
-│   psutil (CPU, per-core, RAM, Disk I/O, Net Bandwidth, Top Processes) │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                        MONITORING AGENT (agent/)                       │
-│  MetricCollector ──► DetectionEngine ──► Supervisor Watcher Thread     │
-│         │                    │                                         │
-│         ▼                    ▼                                         │
-│   SystemSnapshot         Incidents (Rule-based, Cooldown-managed)      │
-└─────────┬────────────────────┬─────────────────────────────────────────┘
-          │                    │
-          ├────────────────────┼───────────────────┐
-          ▼                    ▼                   ▼
-┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────────┐
-│ RISK ENGINE      │  │ REMEDIATION      │  │ PERSISTENCE (store/db.py) │
-│ (engine/risk.py) │  │ (engine/remed.)  │  │ SQLite: metric_snapshots, │
-│ OSS + TES +      │  │ OBSERVE, SUGGEST │  │ incidents, remediation_log│
-│ DSS + BCS = RE   │  │ APPROVED_AUTO    │  └───────────────────────────┘
-└─────────┬────────┘  │ MANUAL approval  │
-          │           └────────┬─────────┘
-          ▼                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                         STREAMLIT DASHBOARD (ui/)                      │
-│   Health Gauge ──► Aura Heatmap ──► Risk Timeline ──► Dependency Graph │
-│   Active Incidents ──► Manual Remediation Controls ──► PDF Export      │
-└────────────────────────────────────────────────────────────────────────┘
+                                  ┌──────────────────────────────────────────────────┐
+                                  │               VISITOR DEVICE (LAPTOP)            │
+                                  ├────────────────────────┬─────────────────────────┤
+                                  │  Mode A (Web Browser)  │  Mode B (Local Agent)   │
+                                  │  • Viewport & Cores    │  • psutil Telemetry     │
+                                  │  • Online/Offline state│  • Processes & Disks    │
+                                  │  • Sandbox Boundary    │  • Safe Self-Healing    │
+                                  └───────────┬────────────┴────────────┬────────────┘
+                                              │                         │
+                          HTTPS (HTML/JS)     │      HTTPS (Token Auth) │
+                                              │      /api/v1/devices/*  │
+                                              ▼                         ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        AREE DEPLOYED SERVER (STREAMLIT / TORNADO)                      │
+│                                                                                        │
+│   ┌──────────────────────────────────┐      ┌──────────────────────────────────────┐   │
+│   │   Streamlit Web UI (ui/app.py)   │      │ Tornado Mounted Ingest (/server)     │   │
+│   │   • Target Device Selector       │◄─────┤ • DeviceManager (HMAC Salted Auth)   │   │
+│   │   • Browser Diagnostics Sandbox  │      │ • TelemetryProcessor                 │   │
+│   │   • Live Gauges & Incident Feed  │      │ • Heartbeat & Task Dispatcher        │   │
+│   └─────────────────┬────────────────┘      └──────────────────┬───────────────────┘   │
+│                     │                                          │                       │
+│                     ├──────────────────────────────────────────┘                       │
+│                     ▼                                                                  │
+│   ┌──────────────────────────────────┐      ┌──────────────────────────────────────┐   │
+│   │ Canonical Risk Engine (OSS/RE)   │      │ Thread-Safe Persistence (store/db.py)│   │
+│   │ RE = (OSS_risk*0.35 + TES*0.25   │      │ • devices registry                   │   │
+│   │     + DSS*0.25 + BCS*0.15) * 100 │      │ • metric_snapshots (isolated/device) │   │
+│   └──────────────────────────────────┘      │ • incidents & device_tasks queue     │   │
+│                                             └──────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -88,88 +89,54 @@ $$\text{RE} = \left( \text{OSS}_{\text{risk}} \cdot 0.35 + \text{TES} \cdot 0.25
 ## 🛡️ 4. Safe Autonomous Remediation
 
 AREE adheres to the **Principle of Least Privilege** and defensive engineering:
-- **No arbitrary process termination**: The system will never terminate processes solely because of CPU spikes.
-- **No arbitrary deletion**: Only approved temporary files in designated cache directories can be purged.
-- **No unauthorized network reconfigurations**: Network settings and firewalls are never modified automatically.
-
-### Permission Modes:
-1. **`OBSERVE`** *(Default)*: Monitors and logs telemetry only. All remediation is strictly disabled.
-2. **`SUGGEST`**: Recommends corrective playbooks and outlines rationale, awaiting human dispatch.
-3. **`APPROVED_AUTO`**: Automatically executes items strictly listed on the **Safe Allowlist**:
-   - Runtime garbage collection (`gc.collect()`)
-   - Cleaning `__pycache__` and stale temp files
-   - Process priority throttling (`psutil.BELOW_NORMAL_PRIORITY_CLASS`)
-4. **`MANUAL`**: Generates interactive UI approval tokens in the dashboard before executing any action.
+- **Pull-Based Task Queue**: Remote devices poll `/api/v1/devices/telemetry` or `/heartbeat`. Remote commands are never pushed unpredictably over inbound ports.
+- **Strict Allowlist**: Agents only execute verified allowlisted actions:
+  - `GC_COLLECT`: Memory garbage collection on Python runtimes.
+  - `CLEAR_TEMP_FILES`: Safe purge of temporary cache directories.
+  - `LOWER_PROCESS_PRIORITY`: Throttling non-critical compute hogs.
+- **Dry-Run by Default**: Tasks default to simulation mode unless explicitly dispatched for live execution.
+- **No Arbitrary Shell Execution**: The agent rejects any command not in the allowlist.
 
 ---
 
-## 🚀 5. Getting Started
+## 💻 5. Quickstart & Multi-Device Usage
 
-### Prerequisites:
-- Python 3.10, 3.11, or 3.12
-- Supported OS: Windows 10/11, Ubuntu 20.04+, macOS 12+
+### A. Accessing the Deployed Streamlit Dashboard
+Open the deployed AREE URL in any web browser:
+1. Under **Target Device**, choose **🌐 Browser-Only Status (This Device)** to inspect your client browser's viewport, logical CPU cores, and network status without installing software.
+2. The UI clearly informs you of browser sandbox boundaries and provides the enrollment command for full hardware metrics.
 
-### 1. Clone & Set Up Virtual Environment:
+### B. Enrolling Your Laptop / Remote Device (Mode B)
+To monitor genuine CPU, RAM, disk, processes, and run self-healing on your physical computer:
+
+1. **Install agent prerequisites**:
 ```bash
-git clone https://github.com/Deepanshu911/AREE.git
-cd AREE
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Windows:
-venv\Scripts\activate
-# On Linux/macOS:
-source venv/bin/activate
+pip install psutil requests
 ```
 
-### 2. Install Dependencies:
+2. **Download or run `aree_agent.py`**:
 ```bash
-pip install -r requirements.txt
+python aree_agent.py --server https://<your-deployed-streamlit-url> --enroll --name "My-Laptop"
 ```
+*(For local testing, default is `http://localhost:8501`)*
 
-### 3. Environment Variables (Optional):
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Configure your optional AbuseIPDB API key and Slack bot credentials if desired.
+3. **What happens next:**
+- The agent securely contacts `/api/v1/devices/enroll` and receives a salted secret Bearer token (stored locally in `aree_agent_config.json`).
+- Live hardware telemetry begins streaming every 5 seconds.
+- Switch to the AREE dashboard and select **`My-Laptop`** from the **Target Device** dropdown.
+- You will see genuine live metrics, active local incidents, and real-time self-healing options!
 
 ---
 
-## 💻 6. Running AREE
+## 🧪 6. Test Suite & Verification
 
-### Launch Streamlit Dashboard:
-```bash
-streamlit run ui/app.py
-```
-*Or forward via root launcher:*
-```bash
-streamlit run app.py
-```
-Open your browser at `http://localhost:8501`.
+Run the full automated test suite (38 unit, integration, and security tests):
 
-### Run Batch Telemetry Sweep (Headless):
-```bash
-python monitor_batch.py
-```
-
-### Run Chaos Simulator:
-```bash
-python chaos_test.py
-```
-
-### Run Full Test Suite:
 ```bash
 pytest tests/ -v
 ```
 
----
-
-## 🧪 7. Test Coverage
-
-The test suite covers unit and end-to-end integration contracts across all subsystems:
+### Coverage Breakdown:
 
 | Test Module | Coverage Scope | Status |
 |---|---|:---:|
@@ -178,26 +145,21 @@ The test suite covers unit and end-to-end integration contracts across all subsy
 | `tests/test_risk_engine.py` | OSS/RE bounds, monotonicity, tier categorization, breakdown math | ✅ PASS |
 | `tests/test_remediation.py` | Permission modes, dry-run safety, allowlist enforcement, gc execution | ✅ PASS |
 | `tests/test_db.py` | SQLite schema creation, snapshot writes, incident state transitions | ✅ PASS |
+| `tests/test_multi_device.py` | Salted token auth, HMAC verification, device isolation, task queue | ✅ PASS |
+| `tests/test_dashboard.py` | UI module imports, Plotly/Matplotlib/PDF visual generators | ✅ PASS |
 | `tests/test_forecaster.py` | Differential equation numerical stability, threshold breach checks | ✅ PASS |
 | `tests/test_integration.py` | Full collector ➔ detector ➔ risk ➔ remediation ➔ DB lifecycle | ✅ PASS |
 
-**Total:** 31 tests passed in ~2.0s.
+**Total:** 38 tests passing (100% pass rate).
 
 ---
 
-## 🔒 8. Security & Data Privacy
+## 🔒 7. Security & Data Privacy
 
-- **No Hardcoded Credentials**: API tokens and secrets are strictly retrieved from environment variables.
-- **Git Hygiene**: `.gitignore` explicitly prevents database artifacts (`*.db`), virtual environments, logs, and `.env` files from entering source control.
-- **Data Minimization**: The local agent collects only system-level performance telemetry. No keystrokes, personal user documents, browsing histories, or credentials are read or stored.
-
----
-
-## ⚠️ 9. Honest Transparency & Known Limitations
-
-1. **Local Machine Scope**: In standalone desktop mode, the telemetry reflects the physical computer where AREE is executed. Distributed multi-server monitoring requires agent enrollment per host.
-2. **Transparent vs. Black-box Scoring**: AREE utilizes interpretable mathematical modeling rather than opaque black-box neural networks for the base risk formula, ensuring zero hallucinated explanations during incident audits.
-3. **OS-Specific Privileges**: Process priority adjustment on Linux/macOS requires standard user privileges over the owned process; system-level service manipulation requires explicit administrative authorization.
+- **Salted SHA-256 Token Auth**: Incoming device telemetry requires constant-time HMAC comparison against salted SHA-256 hashes (`AREE_MULTI_DEVICE_SECURITY_SALT_2026`).
+- **Data Isolation**: Telemetry snapshots and incidents are strictly partitioned per `device_id` in SQLite.
+- **Git Hygiene**: `.gitignore` strictly excludes local databases (`aree_data.db`), agent configurations (`aree_agent_config.json`), logs, and secrets.
+- **No Intrusive Surveillance**: The agent collects only standard performance telemetry. No keystrokes, personal files, webcam, or browser histories are accessed.
 
 ---
 
