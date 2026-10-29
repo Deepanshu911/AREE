@@ -15,7 +15,12 @@ import logging
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+
+try:
+    import plotly.graph_objects as go
+    _plotly_available = True
+except ImportError:
+    _plotly_available = False
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -649,27 +654,31 @@ col_gauge, col_table = st.columns([1, 1])
 
 with col_gauge:
     st.markdown("### 🩺 System Health Score")
-    gauge_fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=health_score,
-        title={"text": "System Stability Index"},
-        gauge={
-            "axis": {"range": [0, 100]},
-            "bar": {"color": "#00C896"},
-            "steps": [
-                {"range": [0, 40],   "color": "#4a1010"},
-                {"range": [40, 70],  "color": "#3a2a00"},
-                {"range": [70, 100], "color": "#0a2a1a"},
-            ],
-            "threshold": {
-                "line": {"color": "#ef4444", "width": 4},
-                "thickness": 0.75,
-                "value": 100 - critical_threshold,
+    if _plotly_available:
+        gauge_fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=health_score,
+            title={"text": "System Stability Index"},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": "#00C896"},
+                "steps": [
+                    {"range": [0, 40],   "color": "#4a1010"},
+                    {"range": [40, 70],  "color": "#3a2a00"},
+                    {"range": [70, 100], "color": "#0a2a1a"},
+                ],
+                "threshold": {
+                    "line": {"color": "#ef4444", "width": 4},
+                    "thickness": 0.75,
+                    "value": 100 - critical_threshold,
+                },
             },
-        },
-    ))
-    gauge_fig.update_layout(paper_bgcolor="#020617", font={"color": "white"}, height=300)
-    st.plotly_chart(gauge_fig, use_container_width=True)
+        ))
+        gauge_fig.update_layout(paper_bgcolor="#020617", font={"color": "white"}, height=300)
+        st.plotly_chart(gauge_fig, use_container_width=True)
+    else:
+        st.metric("System Stability Index", f"{health_score:.1f}%")
+        st.progress(max(0.0, min(1.0, health_score / 100.0)))
 
 with col_table:
     st.markdown("### 📊 Service Risk Overview")
