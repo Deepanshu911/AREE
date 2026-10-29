@@ -1,33 +1,42 @@
 # ⚡ AREE — Autonomous Risk Evolution Engine (v2.1)
 
-> **Multi-Device Real-Time System Monitoring, Cyber Risk Evolution, and Safe Autonomous Self-Healing Platform**
+> **Public Multi-Device Cyber Risk Monitoring & Safe Autonomous Self-Healing Platform**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests Passing](https://img.shields.io/badge/tests-38%2F38%20passing-brightgreen.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-43%2F43%20passing-brightgreen.svg)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Deployment: Streamlit Cloud Ready](https://img.shields.io/badge/Streamlit%20Cloud-Ready-ff4b4b.svg)](ui/app.py)
 [![Architecture: Safe Self--Healing](https://img.shields.io/badge/Architecture-Safe%20Self--Healing-orange.svg)](#safe-autonomous-remediation)
 
 ---
 
-## 📌 1. Project Overview
+## 📌 1. Project Overview & Public Visitor Mode
 
-**AREE (Autonomous Risk Evolution Engine)** is a distributed real-time cyber risk monitoring, topological incident propagation, and safe self-healing platform.
+**AREE (Autonomous Risk Evolution Engine)** is a public, multi-device cyber risk monitoring, topological risk propagation, and safe self-healing platform.
 
-When deployed in the cloud (such as on Streamlit Community Cloud), a common pitfall is showing the cloud container's hardware metrics instead of the visitor's device. **AREE v2.1 solves this with a dual-mode multi-device architecture:**
+### 🌟 The Core Zero-Install Visitor Guarantee
+When you share your deployed Streamlit URL with another person, **anyone who opens the link on their laptop immediately sees information about THEIR OWN device, not your laptop's metrics.**
 
-- **Mode A (Browser-Only Status)**: Zero-install diagnostic mode for visitors opening the deployed website in a browser. It captures legitimate client capabilities (screen resolution, color depth, browser platform, hardware concurrency, network online state, navigation timings) while honestly respecting the browser sandbox boundary (no fake local CPU/disk/process claims).
-- **Mode B (Full Local Device Monitoring)**: Cross-platform local agent (`aree_agent.py`) running on client laptops/servers. Communicates over authenticated single-port Tornado endpoints (`/api/v1/devices/...`) to stream genuine `psutil` metrics, detect local incidents, and execute pull-based, allowlisted self-healing playbooks.
+The visitor does **NOT** have to:
+- ❌ Install Python, pip, or any software.
+- ❌ Download or run any background agent.
+- ❌ Open Terminal, CMD, or PowerShell.
+- ❌ Copy-paste commands, tokens, or scripts.
+- ❌ Manually configure device settings.
+- ❌ Copy any files from the developer's computer.
+
+**The only action required from any visitor is opening the website link in their web browser.**
 
 ---
 
-## 🏗️ 2. System Architecture
+## 🏗️ 2. Dual-Mode Architecture
 
 ```
                                   ┌──────────────────────────────────────────────────┐
                                   │               VISITOR DEVICE (LAPTOP)            │
                                   ├────────────────────────┬─────────────────────────┤
                                   │  Mode A (Web Browser)  │  Mode B (Local Agent)   │
+                                  │  • Zero-Install Default│  • Optional Advanced    │
                                   │  • Viewport & Cores    │  • psutil Telemetry     │
                                   │  • Online/Offline state│  • Processes & Disks    │
                                   │  • Sandbox Boundary    │  • Safe Self-Healing    │
@@ -42,8 +51,8 @@ When deployed in the cloud (such as on Streamlit Community Cloud), a common pitf
 │   ┌──────────────────────────────────┐      ┌──────────────────────────────────────┐   │
 │   │   Streamlit Web UI (ui/app.py)   │      │ Tornado Mounted Ingest (/server)     │   │
 │   │   • Target Device Selector       │◄─────┤ • DeviceManager (HMAC Salted Auth)   │   │
-│   │   • Browser Diagnostics Sandbox  │      │ • TelemetryProcessor                 │   │
-│   │   • Live Gauges & Incident Feed  │      │ • Heartbeat & Task Dispatcher        │   │
+│   │   • Browser Diagnostics Console  │      │ • TelemetryProcessor                 │   │
+│   │   • Honest Capability Matrix     │      │ • Heartbeat & Task Dispatcher        │   │
 │   └─────────────────┬────────────────┘      └──────────────────┬───────────────────┘   │
 │                     │                                          │                       │
 │                     ├──────────────────────────────────────────┘                       │
@@ -59,7 +68,29 @@ When deployed in the cloud (such as on Streamlit Community Cloud), a common pitf
 
 ---
 
-## 📐 3. Mathematical Risk Formulation
+## 🛡️ 3. Honest Browser Sandbox & Capabilities Matrix
+
+Modern cybersecurity requires complete transparency in telemetry. A normal website cannot directly access complete operating-system CPU utilization, total physical RAM, storage partitions, or background processes without native privileges.
+
+**AREE never fabricates data or labels mock values as real.** In Visitor Mode, the dashboard displays only metrics genuinely available through standard browser APIs, and explicitly designates protected host metrics:
+
+| System Metric | Status in Browser Mode | Value / Reading | Architectural Sandbox Boundary |
+|---|---|---|---|
+| **Client OS & Platform** | 🟢 **Observed** | Detected via User-Agent & Client Hints | Standard Web Browser API |
+| **Logical CPU Cores** | 🟢 **Observed** | `navigator.hardwareConcurrency` | Available via browser runtime |
+| **Screen & Viewport** | 🟢 **Observed** | `window.screen` & `window.innerWidth/Height` | Viewport dimensions available to layout engine |
+| **Network Connectivity** | 🟢 **Observed** | `navigator.onLine` & Network Info API | Real-time browser connection state |
+| **Page Performance & Timings** | 🟢 **Observed** | Navigation Timing & Performance API | DOM lifecycle & network transit duration |
+| **Device Memory (Approx)** | 🟡 **Restricted** | Coarse-grained tier (e.g. 8 GiB) | Coarse tier only (prevent browser fingerprinting) |
+| **Host CPU Utilization %** | 🔒 **Not Available in Browser Mode** | `N/A (Browser Sandbox Restriction)` | Browser sandbox isolates web apps from OS scheduler |
+| **Physical RAM & Swap** | 🔒 **Not Available in Browser Mode** | `N/A (Browser Sandbox Restriction)` | Direct kernel virtual memory access requires OS privileges |
+| **Local Storage Partitions** | 🔒 **Not Available in Browser Mode** | `N/A (Browser Sandbox Restriction)` | Origin policy forbids inspecting host disk partitions or I/O |
+| **Running Background Processes** | 🔒 **Not Available in Browser Mode** | `N/A (Browser Sandbox Restriction)` | Inspecting OS process tables requires process management rights |
+| **Raw Network Socket Sniffing** | 🔒 **Not Available in Browser Mode** | `N/A (Browser Sandbox Restriction)` | Raw socket capture is restricted by TCP/IP stack & CORS |
+
+---
+
+## 📐 4. Mathematical Risk Formulation
 
 The canonical Risk Energy (RE) score is a normalized scalar value bounded strictly in $[0.0, 100.0]$:
 
@@ -86,9 +117,9 @@ $$\text{RE} = \left( \text{OSS}_{\text{risk}} \cdot 0.35 + \text{TES} \cdot 0.25
 
 ---
 
-## 🛡️ 4. Safe Autonomous Remediation
+## 🛡️ 5. Safe Autonomous Remediation (Agent Mode)
 
-AREE adheres to the **Principle of Least Privilege** and defensive engineering:
+For administrators who enroll computers via the optional standalone agent:
 - **Pull-Based Task Queue**: Remote devices poll `/api/v1/devices/telemetry` or `/heartbeat`. Remote commands are never pushed unpredictably over inbound ports.
 - **Strict Allowlist**: Agents only execute verified allowlisted actions:
   - `GC_COLLECT`: Memory garbage collection on Python runtimes.
@@ -99,38 +130,36 @@ AREE adheres to the **Principle of Least Privilege** and defensive engineering:
 
 ---
 
-## 💻 5. Quickstart & Multi-Device Usage
+## 💻 6. Quickstart & Multi-Device Usage
 
-### A. Accessing the Deployed Streamlit Dashboard
-Open the deployed AREE URL in any web browser:
-1. Under **Target Device**, choose **🌐 Browser-Only Status (This Device)** to inspect your client browser's viewport, logical CPU cores, and network status without installing software.
-2. The UI clearly informs you of browser sandbox boundaries and provides the enrollment command for full hardware metrics.
+### A. Public Visitor View (Zero Install)
+Simply share your deployed Streamlit URL (e.g. `https://<your-app>.streamlit.app`).
+1. Any visitor who opens the link immediately sees their own browser session: `👤 My Device [vis-xxxx] (Browser-Only Mode)`.
+2. Their browser model, operating system, logical cores, display resolution, active viewport, network reachability, and page load latency are detected automatically.
+3. Multiple visitors receive isolated sessions simultaneously with zero data leakage.
 
-### B. Enrolling Your Laptop / Remote Device (Mode B)
-To monitor genuine CPU, RAM, disk, processes, and run self-healing on your physical computer:
+### B. Optional: Enrolling a Computer for Full Host OS Monitoring (Mode B)
+If you specifically want to stream complete host operating system CPU load, RAM usage, storage mountpoints, top processes, and run self-healing:
 
 1. **Install agent prerequisites**:
 ```bash
 pip install psutil requests
 ```
 
-2. **Download or run `aree_agent.py`**:
+2. **Run `aree_agent.py` pointing to your deployed Streamlit URL**:
 ```bash
-python aree_agent.py --server https://<your-deployed-streamlit-url> --enroll --name "My-Laptop"
+python aree_agent.py --server https://<your-deployed-streamlit-url> --enroll --name "Work-Laptop"
 ```
-*(For local testing, default is `http://localhost:8501`)*
 
-3. **What happens next:**
-- The agent securely contacts `/api/v1/devices/enroll` and receives a salted secret Bearer token (stored locally in `aree_agent_config.json`).
-- Live hardware telemetry begins streaming every 5 seconds.
-- Switch to the AREE dashboard and select **`My-Laptop`** from the **Target Device** dropdown.
-- You will see genuine live metrics, active local incidents, and real-time self-healing options!
+3. **What happens next**:
+- The agent enrolls and streams genuine hardware telemetry every 5 seconds.
+- The computer appears in the dashboard's **Target Device** dropdown for real-time monitoring and safe auto-remediation.
 
 ---
 
-## 🧪 6. Test Suite & Verification
+## 🧪 7. Test Suite & Verification
 
-Run the full automated test suite (38 unit, integration, and security tests):
+Run the full automated test suite (43 unit, integration, visitor mode, and multi-device security tests):
 
 ```bash
 pytest tests/ -v
@@ -140,6 +169,7 @@ pytest tests/ -v
 
 | Test Module | Coverage Scope | Status |
 |---|---|:---:|
+| `tests/test_visitor_mode.py` | Auto session creation, visitor isolation, no fake metrics, XSS/rate limiting | ✅ PASS |
 | `tests/test_collector.py` | psutil hardware collection, timestamp accuracy, disk/process parsing | ✅ PASS |
 | `tests/test_detector.py` | Threshold breach logic, cooldown deduplication, explanation integrity | ✅ PASS |
 | `tests/test_risk_engine.py` | OSS/RE bounds, monotonicity, tier categorization, breakdown math | ✅ PASS |
@@ -150,15 +180,15 @@ pytest tests/ -v
 | `tests/test_forecaster.py` | Differential equation numerical stability, threshold breach checks | ✅ PASS |
 | `tests/test_integration.py` | Full collector ➔ detector ➔ risk ➔ remediation ➔ DB lifecycle | ✅ PASS |
 
-**Total:** 38 tests passing (100% pass rate).
+**Total:** 43 tests passing (100% pass rate).
 
 ---
 
-## 🔒 7. Security & Data Privacy
+## 🔒 8. Security & Data Privacy
 
-- **Salted SHA-256 Token Auth**: Incoming device telemetry requires constant-time HMAC comparison against salted SHA-256 hashes (`AREE_MULTI_DEVICE_SECURITY_SALT_2026`).
-- **Data Isolation**: Telemetry snapshots and incidents are strictly partitioned per `device_id` in SQLite.
-- **Git Hygiene**: `.gitignore` strictly excludes local databases (`aree_data.db`), agent configurations (`aree_agent_config.json`), logs, and secrets.
+- **Session Isolation**: Each web visitor is assigned a cryptographically random session ID (`vis-xxxxxxxx`). No shared in-memory dictionaries or database records leak between visitors.
+- **Input Sanitization & Rate Limiting**: All client-side parameters are HTML-escaped and bounded, and updates are rate limited to 1 per 0.5s to prevent flooding.
+- **Salted SHA-256 Token Auth**: Enrolled agent telemetry requires constant-time HMAC comparison against salted SHA-256 hashes (`AREE_MULTI_DEVICE_SECURITY_SALT_2026`).
 - **No Intrusive Surveillance**: The agent collects only standard performance telemetry. No keystrokes, personal files, webcam, or browser histories are accessed.
 
 ---
