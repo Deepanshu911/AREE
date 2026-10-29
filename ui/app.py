@@ -156,6 +156,18 @@ for k, v in _ss_defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Auto-start agent on initial load if backend available
+if st.session_state.get("agent") is None and _backend_available:
+    try:
+        cfg = load_config() if callable(load_config) else {}
+        db = IncidentDB()
+        agent = MonitoringAgent(config=cfg, db=db)
+        agent.start()
+        st.session_state.agent = agent
+        st.session_state.db = db
+    except Exception as e:
+        logger.warning("Agent auto-init error: %s", e)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════════════════════════════
