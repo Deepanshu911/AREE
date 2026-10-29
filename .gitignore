@@ -5,6 +5,8 @@
 
 # Local databases and runtime data
 *.db
+*.db-journal
+*.db-wal
 *.sqlite
 *.sqlite3
 aree_data.db
