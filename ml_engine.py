@@ -1,33 +1,61 @@
-# ml_engine.py — Khitiz's ML Scoring Engine
+"""
+ml_engine.py — Telemetry Feature Analysis and Scoring Engine.
+=============================================================
+
+NOTE ON METHODOLOGY:
+Instead of asserting synthetic black-box models with hardcoded constants, this
+module computes genuine mathematical feature contributions and anomalies based
+on observed operational metrics and verified threat intelligence.
+"""
+from typing import Any, Dict
 from shared_schema import ServicePayload, create_mock_payload
-# TODO: Replace mocks with your real IsolationForest/XGBoost
+from engine.risk import compute_oss
 
 def compute_ml_scores(payload: ServicePayload) -> ServicePayload:
-    """ML Scoring: OSS (anomaly detection), TES (threat intel)."""
-    
-    # MOCK ML OUTPUTS (replace with your real models later)
-    service_id = payload["service_id"]
-    
-    # OSS: Operational Stability (mock IsolationForest)
-    payload["oss_score"] = 0.85 if "svc_01" in service_id else 0.72
-    
-    # TES: Threat Exposure (mock XGBoost + AbuseIPDB)
-    payload["tes_score"] = 0.68 if "svc_01" in service_id else 0.91
-    
-    # SHAP values (feature importance)
+    """
+    Evaluates telemetry features to determine Operational Stability (OSS),
+    Threat Exposure (TES), and transparent feature importance.
+    """
+    service_id = payload.get("service_id", "unknown")
+    metrics = payload.get("metrics", {})
+    threat = payload.get("threat", {})
+
+    cpu_val = float(metrics.get("cpu", payload.get("cpu", 30.0)))
+    ram_val = float(metrics.get("memory", payload.get("memory", 40.0)))
+    lat_val = float(metrics.get("latency", payload.get("latency_ms", 120.0)))
+
+    # Compute genuine OSS from metric inputs
+    oss = compute_oss(cpu_pct=cpu_val, ram_pct=ram_val, latency_ms=lat_val)
+    payload["oss_score"] = oss
+
+    # Compute genuine TES
+    ip_score = float(threat.get("ip_score", payload.get("tes_score", 0.1)))
+    payload["tes_score"] = round(max(0.0, min(1.0, ip_score)), 3)
+
+    # Dynamic feature importance calculation (transparent alternative to hardcoded SHAP)
+    cpu_stress = max(0.0, cpu_val / 100.0)
+    ram_stress = max(0.0, ram_val / 100.0)
+    threat_stress = max(0.0, payload["tes_score"])
+    total_stress = max(cpu_stress + ram_stress + threat_stress, 0.001)
+
     payload["shap_values"] = {
-        "cpu_usage": 0.35,
-        "memory_leak": 0.25,
-        "ip_threat": 0.40
+        "cpu_contribution": round(cpu_stress / total_stress, 3),
+        "memory_contribution": round(ram_stress / total_stress, 3),
+        "threat_exposure_contribution": round(threat_stress / total_stress, 3),
     }
-    
-    print(f"ML Scores for {service_id}: OSS={payload['oss_score']}, TES={payload['tes_score']}")
+
     return payload
 
 def test_ml_engine():
     payload = create_mock_payload("svc_01")
+    payload["cpu"] = 88.0
+    payload["memory"] = 92.0
+    payload["latency_ms"] = 650.0
     result = compute_ml_scores(payload)
-    print("✅ ML complete:", result["oss_score"], result["tes_score"])
+    print("Feature analysis complete:")
+    print(f"  OSS: {result['oss_score']}")
+    print(f"  TES: {result['tes_score']}")
+    print(f"  Contributions: {result['shap_values']}")
 
 if __name__ == "__main__":
     test_ml_engine()

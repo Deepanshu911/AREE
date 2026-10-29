@@ -1,0 +1,35 @@
+monitoring:
+  interval_seconds: 10
+  history_retention_hours: 24
+
+thresholds:
+  cpu_percent: 85.0
+  ram_percent: 90.0
+  disk_min_free_gb: 5.0
+  process_cpu_percent: 80.0
+  cooldown_seconds: 120
+
+risk:
+  warning_threshold: 45.0
+  critical_threshold: 75.0
+  weights:
+    oss_risk: 0.35
+    tes: 0.25
+    dss: 0.25
+    bcs: 0.15
+  default_bcs: 0.5
+
+remediation:
+  mode: "SUGGEST"  # OBSERVE | SUGGEST | APPROVED_AUTO | MANUAL
+  dry_run: true
+  configured_temp_dirs: []
+  registered_services: []
+
+notifications:
+  slack_enabled: false
+  slack_channel: "#aree-alerts"
+  re_alert_threshold: 75.0
+
+database:
+  path: "aree_data.db"
+  max_snapshot_rows: 1000
